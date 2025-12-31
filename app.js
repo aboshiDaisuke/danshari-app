@@ -1,23 +1,11 @@
 /**
  * Danshari App Logic
- * Backend: Firebase (Firestore + Storage)
+ * Uses IndexedDB for storage and Vanilla JS for UI
  */
 
-// --- Firebase Configuration ---
-const firebaseConfig = {
-    apiKey: "AIzaSyDXqfNMZwYpQuBiyvx1Q9TFxSkasE32Bcg",
-    authDomain: "danshari-app-7d996.firebaseapp.com",
-    projectId: "danshari-app-7d996",
-    storageBucket: "danshari-app-7d996.firebasestorage.app",
-    messagingSenderId: "578784782102",
-    appId: "1:578784782102:web:56852077edfc1111591237"
-};
-
-// Initialize Firebase
-firebase.initializeApp(firebaseConfig);
-const db = firebase.firestore();
-const storage = firebase.storage();
-const COLLECTION_NAME = 'items';
+const DB_NAME = 'DanshariDB';
+const STORE_NAME = 'items';
+const DB_VERSION = 1;
 
 // --- User Management (LocalStorage) ---
 const USERS_KEY = 'danshari_users';
@@ -34,8 +22,7 @@ function setCurrentUser(name) {
     currentUser = name;
     localStorage.setItem(CURRENT_USER_KEY, name);
     updateHeaderUser();
-    // Render list will be triggered by update/get
-    showList();
+    renderList(); // Re-render to potentially show/hide items if we filter later (currently just updates badges)
 }
 
 function addUser(name) {
@@ -49,115 +36,96 @@ function addUser(name) {
     userModal.classList.add('hidden');
 }
 
-// --- Firebase Helpers ---
+// --- IndexedDB Helper ---
+const dbPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-// Convert Base64 URI to Blob for upload
-function dataURItoBlob(dataURI) {
-    const splitDataURI = dataURI.split(',');
-    const byteString = splitDataURI[0].indexOf('base64') >= 0 ? atob(splitDataURI[1]) : decodeURI(splitDataURI[1]);
-    const mimeString = splitDataURI[0].split(':')[1].split(';')[0];
-    const ia = new Uint8Array(byteString.length);
-    for (let i = 0; i < byteString.length; i++) {
-        ia[i] = byteString.charCodeAt(i);
-    }
-    return new Blob([ia], { type: mimeString });
-}
+    request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+            const store = db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+            store.createIndex('date', 'date', { unique: false });
+        }
+    };
+
+    request.onsuccess = (event) => resolve(event.target.result);
+    request.onerror = (event) => reject(event.target.error);
+});
 
 async function saveItem(item) {
-    // 1. Upload image to Firebase Storage
-    const timestamp = new Date().getTime();
-    const filename = `images/${currentUser}/${timestamp}.jpg`;
-    const storageRef = storage.ref().child(filename);
-
-    // item.image is base64 string
-    const blob = dataURItoBlob(item.image);
-    await storageRef.put(blob);
-    const downloadURL = await storageRef.getDownloadURL();
-
-    // 2. Save metadata to Firestore
-    // Remove large base64 string from DB object, use URL instead
-    const docData = {
-        ...item,
-        image: downloadURL, // Use cloud URL
-        storagePath: filename, // Keep path for deletion
-        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    };
-    // Ensure id is undefined if it exists (Firestore generates it)
-    if (docData.id) delete docData.id;
-
-    return db.collection(COLLECTION_NAME).add(docData);
+    const db = await dbPromise;
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.add(item);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
 }
 
 async function getAllItems() {
-    // Fetch all items (or query by user if data grows large)
-    // For simplicity, fetch all and filter client-side for now to match structure
-    // In production, should use .where('owner', '==', currentUser)
-    const snapshot = await db.collection(COLLECTION_NAME).orderBy('date', 'desc').get();
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const db = await dbPromise;
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.getAll(); // Get all items
+        request.onsuccess = () => {
+            // Sort by date desc in JS (easier than IDBCursor for simple arrays)
+            const items = request.result;
+            items.sort((a, b) => new Date(b.date) - new Date(a.date));
+            resolve(items);
+        };
+        request.onerror = () => reject(request.error);
+    });
 }
 
 async function updateItem(item) {
-    // If image changed (base64), upload new one. If it's URL, keep it.
-    let imageUrl = item.image;
-    let storagePath = item.storagePath;
-
-    if (item.image.startsWith('data:')) {
-        // Upload new image
-        const timestamp = new Date().getTime();
-        const filename = `images/${currentUser}/${timestamp}.jpg`;
-        const storageRef = storage.ref().child(filename);
-        const blob = dataURItoBlob(item.image);
-        await storageRef.put(blob);
-        imageUrl = await storageRef.getDownloadURL();
-        storagePath = filename;
-
-        // Delete old image if exists
-        if (item.storagePath) {
-            storage.ref().child(item.storagePath).delete().catch(e => console.warn('Old image delete failed', e));
-        }
-    }
-
-    const docData = {
-        reason: item.reason,
-        comment: item.comment,
-        date: item.date,
-        owner: item.owner,
-        image: imageUrl,
-        storagePath: storagePath
-    };
-
-    return db.collection(COLLECTION_NAME).doc(item.id).update(docData);
+    const db = await dbPromise;
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.put(item);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
 }
 
-async function deleteItem(item) {
-    // 1. Delete from Firestore
-    await db.collection(COLLECTION_NAME).doc(item.id).delete();
-
-    // 2. Delete from Storage if path exists
-    if (item.storagePath) {
-        await storage.ref().child(item.storagePath).delete().catch(e => console.warn('Image delete failed', e));
-    }
+async function deleteItem(id) {
+    const db = await dbPromise;
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.delete(id);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
 }
 
 async function deleteItemsByUser(username) {
-    // Batch delete
-    const snapshot = await db.collection(COLLECTION_NAME).where('owner', '==', username).get();
-    const batch = db.batch();
+    const db = await dbPromise;
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const index = store.index('date');
 
-    // Also delete images
-    const deleteImagePromises = [];
+        let deletedCount = 0;
+        const request = store.openCursor();
 
-    snapshot.docs.forEach(doc => {
-        batch.delete(doc.ref);
-        const data = doc.data();
-        if (data.storagePath) {
-            deleteImagePromises.push(storage.ref().child(data.storagePath).delete().catch(() => { }));
-        }
+        request.onsuccess = (event) => {
+            const cursor = event.target.result;
+            if (cursor) {
+                const item = cursor.value;
+                if (item.owner === username) {
+                    cursor.delete();
+                    deletedCount++;
+                }
+                cursor.continue();
+            } else {
+                resolve(deletedCount);
+            }
+        };
+        request.onerror = () => reject(request.error);
     });
-
-    await Promise.all(deleteImagePromises);
-    await batch.commit();
-    return snapshot.size;
 }
 
 // --- UI Logic ---
@@ -185,6 +153,8 @@ const userModalClose = document.getElementById('user-modal-close');
 const userListEl = document.getElementById('user-list');
 const addUserBtn = document.getElementById('add-user-btn');
 const newUserNameInput = document.getElementById('new-user-name');
+const manageUsersBtn = document.createElement('button');
+
 let isUserManageMode = false;
 
 // Settings UI
@@ -193,31 +163,37 @@ const settingsModal = document.getElementById('settings-modal');
 const settingsModalClose = document.getElementById('settings-modal-close');
 const resetUserDataBtn = document.getElementById('reset-user-data-btn');
 const settingsUserNameLabel = document.getElementById('settings-user-name');
+const exportDataBtn = document.getElementById('export-data-btn');
+const exportProgress = document.getElementById('export-progress');
 const setupFolderBtn = document.getElementById('setup-folder-btn');
 const folderStatus = document.getElementById('folder-status');
+
 const modalWrapper = document.getElementById('modal-wrapper');
 
-// File System - Cloud mode disables direct FS sync for simplicity unless requested
-// But we keep the UI for legacy requests -> Actually let's hide it or warn it works differently?
-// User request was "saved to folder". Syncing cloud + local FS is tricky.
-// Let's keep the setupFolderBtn logic but it is "addition" to Cloud.
+// File System Handle (Ephemeral)
 let rootDirectoryHandle = null;
 
+// File System Logic
 setupFolderBtn.addEventListener('click', async () => {
     try {
         rootDirectoryHandle = await window.showDirectoryPicker();
         folderStatus.style.display = 'block';
-        alert('保存先フォルダを設定しました。\nクラウドに保存すると同時に、このローカルフォルダにもバックアップが保存されます。');
+        alert('保存先フォルダを設定しました。\n今後撮影する写真は、このフォルダ内のユーザー名フォルダに自動保存されます。');
     } catch (err) {
         console.error(err);
+        alert('フォルダの選択がキャンセルされたか、エラーが発生しました。');
     }
 });
 
 async function saveToLocalFile(itemData) {
     if (!rootDirectoryHandle) return;
+
     try {
         const ownerName = itemData.owner || 'ゲスト';
+        // Get or create user directory
         const userDirHandle = await rootDirectoryHandle.getDirectoryHandle(ownerName, { create: true });
+
+        // Create filename
         const d = new Date(itemData.date);
         const dateStr = d.getFullYear() +
             ('0' + (d.getMonth() + 1)).slice(-2) +
@@ -225,20 +201,52 @@ async function saveToLocalFile(itemData) {
             ('0' + d.getHours()).slice(-2) +
             ('0' + d.getMinutes()).slice(-2) +
             ('0' + d.getSeconds()).slice(-2);
+
         const cleanReason = (itemData.reason || 'item').replace(/[\/\\:*?"<>|]/g, '_');
         const filename = `${dateStr}_${cleanReason}.jpg`;
+
+        // Write file
         const fileHandle = await userDirHandle.getFileHandle(filename, { create: true });
         const writable = await fileHandle.createWritable();
 
-        // itemData.image is Base64
-        if (itemData.image.startsWith('data:')) {
-            const blob = dataURItoBlob(itemData.image);
-            await writable.write(blob);
-            await writable.close();
-            console.log('Saved to local file:', filename);
+        // Convert base64 to blob
+        const byteString = atob(itemData.image.split(',')[1]);
+        const mimeString = itemData.image.split(',')[0].split(':')[1].split(';')[0];
+        const ab = new ArrayBuffer(byteString.length);
+        const ia = new Uint8Array(ab);
+        for (let i = 0; i < byteString.length; i++) {
+            ia[i] = byteString.charCodeAt(i);
         }
+        const blob = new Blob([ab], { type: mimeString });
+
+        await writable.write(blob);
+        await writable.close();
+
+        console.log('Saved to local file:', filename);
+        return filename;
     } catch (err) {
         console.error('Error saving to local file:', err);
+        return null; // Don't alert aggressively to avoid disturbing UX, just log.
+    }
+}
+
+async function deleteFromLocalFile(item) {
+    if (!rootDirectoryHandle || !item.filename) return;
+
+    try {
+        const ownerName = item.owner || 'ゲスト';
+        const userDirHandle = await rootDirectoryHandle.getDirectoryHandle(ownerName, { create: false });
+
+        // Delete original
+        await userDirHandle.removeEntry(item.filename).catch(e => console.warn(e));
+        console.log('Deleted local file:', item.filename);
+
+        // Delete processed if exists (legacy support or if re-enabled later)
+        const processedFilename = item.filename.replace('.jpg', '_processed.jpg');
+        await userDirHandle.removeEntry(processedFilename).catch(() => { });
+
+    } catch (err) {
+        console.warn('Could not delete local file (may not exist or permission denied):', err);
     }
 }
 
@@ -247,17 +255,17 @@ const modalContentArea = document.getElementById('modal-detail-content');
 
 // State
 let currentImageData = null;
-let editingItemId = null;
+let editingItemId = null; // Track if we are editing
 
 // Navigation
 function showList() {
     viewAdd.classList.remove('active');
-    viewList.style.display = '';
+    viewList.style.display = ''; // Clear any inline styles
     viewList.classList.add('active');
     fabAdd.style.display = 'flex';
-    updateHeaderUser();
+    updateHeaderUser(); // Ensure header is correct
     renderList();
-    editingItemId = null;
+    editingItemId = null; // Reset editing state
 }
 
 function updateHeaderUser() {
@@ -266,7 +274,7 @@ function updateHeaderUser() {
 
 // User Modal Logic
 userSwitchBtn.addEventListener('click', () => {
-    isUserManageMode = false;
+    isUserManageMode = false; // Reset mode
     renderUserList();
     userModal.classList.remove('hidden');
 });
@@ -275,6 +283,7 @@ userSwitchBtn.addEventListener('click', () => {
 function updateUserModalHeader() {
     let simpleClose = document.getElementById('user-modal-close');
     let header = userModal.querySelector('.modal-header');
+
     let manageBtn = document.getElementById('user-manage-toggle');
     if (!manageBtn) {
         manageBtn = document.createElement('button');
@@ -282,6 +291,7 @@ function updateUserModalHeader() {
         manageBtn.style.cssText = 'background:none; border:none; color:var(--primary-color); font-size:13px; font-weight:600; cursor:pointer; margin-right:auto; margin-left:12px;';
         header.insertBefore(manageBtn, simpleClose);
     }
+
     manageBtn.textContent = isUserManageMode ? '完了' : '編集';
     manageBtn.onclick = () => {
         isUserManageMode = !isUserManageMode;
@@ -291,8 +301,10 @@ function updateUserModalHeader() {
     };
 }
 
+
 userModalClose.addEventListener('click', () => {
     userModal.classList.add('hidden');
+    isUserManageMode = false;
 });
 
 addUserBtn.addEventListener('click', () => {
@@ -304,22 +316,27 @@ addUserBtn.addEventListener('click', () => {
 });
 
 function renderUserList() {
-    updateUserModalHeader();
+    updateUserModalHeader(); // Ensure button state
     userListEl.innerHTML = '';
+
     users.forEach(user => {
         const div = document.createElement('div');
         div.className = `user-item ${user === currentUser ? 'active' : ''}`;
+
+        // Mode dependent content
         if (isUserManageMode) {
+            div.style.position = 'relative';
             div.innerHTML = `
                 <span class="name">${user}</span>
                 <span style="font-size:10px; color:#999;">${user === currentUser ? '(選択中)' : ''}</span>
                 ${user !== currentUser ? `<button class="btn-delete-user" style="margin-top:4px; font-size:10px; padding:2px 8px; background:#fee2e2; color:#b91c1c; border:none; border-radius:4px; cursor:pointer;">削除</button>` : ''}
             `;
+
             const delBtn = div.querySelector('.btn-delete-user');
             if (delBtn) {
                 delBtn.onclick = async (e) => {
                     e.stopPropagation();
-                    if (confirm(`${user} を削除しますか？\nクラウド上の記録もすべて削除されます。`)) {
+                    if (confirm(`${user} を削除しますか？\n記録もすべて削除されます。`)) {
                         await deleteUser(user);
                     }
                 };
@@ -334,6 +351,7 @@ function renderUserList() {
                 userModal.classList.add('hidden');
             };
         }
+
         userListEl.appendChild(div);
     });
 }
@@ -343,11 +361,16 @@ async function deleteUser(username) {
         alert('現在選択中のユーザーは削除できません。');
         return;
     }
+
+    // Delete data
     await deleteItemsByUser(username);
+
+    // Remove from list
     users = users.filter(u => u !== username);
     saveUsers();
     renderUserList();
 }
+
 
 // Settings Logic
 settingsBtn.addEventListener('click', () => {
@@ -359,20 +382,91 @@ settingsModalClose.addEventListener('click', () => {
     settingsModal.classList.add('hidden');
 });
 
-// Remove Export ZIP logic or keep it? 
-// Generating ZIP from Cloud URL is possible but might face CORS issues if not configured.
-// Let's keep it simple and comment out export logic for now, OR try to fetch blobs.
-// For now, let's just not attach the listener or keep a simple alert.
-const exportDataBtn = document.getElementById('export-data-btn');
-if (exportDataBtn) {
-    exportDataBtn.onclick = () => alert('クラウド版では現在この機能は使えません。\n(ローカルフォルダ保存は「保存先フォルダの設定」から可能です)');
-}
+exportDataBtn.addEventListener('click', async () => {
+    if (!window.JSZip) {
+        alert('エラー: JSZipライブラリがロードされていません。インターネット接続を確認してリロードしてください。');
+        return;
+    }
+
+    try {
+        exportDataBtn.disabled = true;
+        exportProgress.style.display = 'block';
+        exportProgress.textContent = 'データを準備中...';
+
+        const zip = new JSZip();
+        const items = await getAllItems();
+
+        if (items.length === 0) {
+            alert('保存する写真がありません。');
+            exportDataBtn.disabled = false;
+            exportProgress.style.display = 'none';
+            return;
+        }
+
+        // Process items
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            const ownerFolder = item.owner || 'ゲスト';
+
+            const d = new Date(item.date);
+            const dateStr = d.getFullYear() +
+                ('0' + (d.getMonth() + 1)).slice(-2) +
+                ('0' + d.getDate()).slice(-2) + '_' +
+                ('0' + d.getHours()).slice(-2) +
+                ('0' + d.getMinutes()).slice(-2) +
+                ('0' + d.getSeconds()).slice(-2);
+
+            const cleanReason = (item.reason || 'item').replace(/[\/\\:*?"<>|]/g, '_');
+            const filename = `${dateStr}_${cleanReason}.jpg`;
+
+            const imgData = item.image.split(',')[1];
+
+            zip.folder(ownerFolder).file(filename, imgData, { base64: true });
+        }
+
+        exportProgress.textContent = 'ZIPファイルを作成中...';
+
+        const content = await zip.generateAsync({ type: "blob" });
+
+        // Trigger download
+        const url = URL.createObjectURL(content);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `断捨離バックアップ_${new Date().toISOString().slice(0, 10)}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        exportProgress.textContent = 'ダウンロードを開始しました。';
+        setTimeout(() => {
+            exportProgress.style.display = 'none';
+            exportDataBtn.disabled = false;
+        }, 3000);
+
+    } catch (err) {
+        console.error(err);
+        alert('エクスポートに失敗しました。');
+        exportDataBtn.disabled = false;
+        exportProgress.style.display = 'none';
+    }
+});
 
 resetUserDataBtn.addEventListener('click', async () => {
-    if (confirm(`本当に ${currentUser} のデータをすべて削除しますか？\nクラウド上のデータも消えます。`)) {
+    if (confirm(`本当に ${currentUser} のデータをすべて削除しますか？\nこの操作は取り消せません。`)) {
+        // Second confirmation
         const input = prompt(`削除を実行するには、以下に「削除」と入力してください。`);
         if (input === '削除') {
             try {
+                // Delete local files for all user items if connected
+                if (rootDirectoryHandle) {
+                    const allItems = await getAllItems();
+                    const userItems = allItems.filter(i => i.owner === currentUser);
+                    for (const item of userItems) {
+                        await deleteFromLocalFile(item);
+                    }
+                }
+
                 const count = await deleteItemsByUser(currentUser);
                 alert(`${count}件のデータを削除しました。`);
                 settingsModal.classList.add('hidden');
@@ -381,6 +475,8 @@ resetUserDataBtn.addEventListener('click', async () => {
                 console.error(err);
                 alert('削除中にエラーが発生しました。');
             }
+        } else {
+            alert('入力が正しくないためキャンセルしました。');
         }
     }
 });
@@ -393,11 +489,11 @@ function showAdd(itemToEdit = null) {
     viewAdd.classList.add('active');
     fabAdd.style.display = 'none';
 
+    // Check if editing
     if (itemToEdit) {
         editingItemId = itemToEdit.id;
         document.getElementById('reason').value = itemToEdit.reason;
         document.getElementById('comment').value = itemToEdit.comment;
-        // In cloud mode, itemToEdit.image is URL.
         currentImageData = itemToEdit.image;
         previewImg.src = currentImageData;
         previewImg.style.display = 'block';
@@ -408,6 +504,7 @@ function showAdd(itemToEdit = null) {
     }
 }
 
+// Event Listeners
 fabAdd.addEventListener('click', () => showAdd(null));
 cancelAddBtn.addEventListener('click', () => {
     resetForm();
@@ -415,11 +512,13 @@ cancelAddBtn.addEventListener('click', () => {
 });
 
 // Image Handling
+
+// Unified file handler
 function handleImageFile(file) {
     if (file && file.type.startsWith('image/')) {
         const reader = new FileReader();
         reader.onload = (event) => {
-            currentImageData = event.target.result; // Base64 string for preview & upload
+            currentImageData = event.target.result; // Base64 string
             previewImg.src = currentImageData;
             previewImg.style.display = 'block';
             placeholder.style.display = 'none';
@@ -432,95 +531,96 @@ cameraInput.addEventListener('change', (e) => {
     handleImageFile(e.target.files[0]);
 });
 
+// Drag & Drop Support
 ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
     imagePreviewArea.addEventListener(eventName, preventDefaults, false);
 });
+
 function preventDefaults(e) {
     e.preventDefault();
     e.stopPropagation();
 }
+
+['dragenter', 'dragover'].forEach(eventName => {
+    imagePreviewArea.addEventListener(eventName, () => {
+        imagePreviewArea.style.borderColor = 'var(--primary-color)';
+        imagePreviewArea.style.backgroundColor = '#eef2f2';
+    }, false);
+});
+
+['dragleave', 'drop'].forEach(eventName => {
+    imagePreviewArea.addEventListener(eventName, () => {
+        imagePreviewArea.style.borderColor = '';
+        imagePreviewArea.style.backgroundColor = '';
+    }, false);
+});
+
 imagePreviewArea.addEventListener('drop', (e) => {
     const dt = e.dataTransfer;
     const files = dt.files;
     handleImageFile(files[0]);
-});
+}, false);
+
 
 // Form Submission
 addForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
     if (!currentImageData) {
-        alert('写真を選択してください。');
+        alert('恐れ入りますが、写真を選択してください。');
         return;
     }
 
     const reason = document.getElementById('reason').value;
     const comment = document.getElementById('comment').value;
+
+    // If editing, keep original date, else use now
     let date = new Date().toISOString();
     let id = undefined;
 
-    // Loading State
-    submitBtn.disabled = true;
-    submitBtn.textContent = editingItemId ? '更新中...' : '送信中...';
-
     if (editingItemId) {
-        // We find original item in list (inefficient but safe)
-        // Or we pass full item to edit. For now simple:
-        // We trust editingItemId
-        id = editingItemId; // Date update: usually preserve original date or update?
-        // Let's preserve original date from finding item logic or assume current.
-        // Actually, updateItem replaces fields. We should fetch original to get old date?
-        // Let's assume passed date is fine or we didn't store it.
-        // In renderList we have the date. Let's try to find it again.
+        try {
+            const allItems = await getAllItems();
+            const originalItem = allItems.find(i => i.id === editingItemId);
+            if (originalItem) {
+                date = originalItem.date;
+                id = editingItemId;
+            }
+        } catch (e) {
+            console.error(e);
+        }
     }
 
     const itemData = {
-        image: currentImageData, // This is either URL (if not changed) or Base64 (if changed)
+        image: currentImageData,
         reason,
         comment,
         date,
         owner: currentUser
     };
 
-    // If editing and image is URL, it means no change. If base64, change.
-
-    // We need original item for ID and existing data
-    if (id) {
-        itemData.id = id;
-        // Try to preserve date from existing item logic if possible, 
-        // but here we just use Today for simplicity OR ideally fetch it.
-    }
+    if (id) itemData.id = id;
 
     try {
         if (editingItemId) {
-            // Need to pass storagePath if we want to delete old image
-            // We can get it from fetching current doc.
-            // For simplicity in this rewrite, we might leak old image if we don't fetch first.
-            // Let's fetch quickly.
-            const doc = await db.collection(COLLECTION_NAME).doc(id).get();
-            if (doc.exists) {
-                const oldData = doc.data();
-                itemData.storagePath = oldData.storagePath;
-                itemData.date = oldData.date; // Keep original date
-                if (!itemData.image.startsWith('data:')) {
-                    itemData.image = oldData.image; // Keep URL
-                }
-            }
             await updateItem(itemData);
         } else {
-            // Save local backup if enabled
+            // Attempt to save to local file system first to get filename
+            let savedFilename = null;
             if (rootDirectoryHandle) {
-                await saveToLocalFile(itemData);
+                savedFilename = await saveToLocalFile(itemData);
             }
+
+            if (savedFilename) {
+                itemData.filename = savedFilename;
+            }
+
             await saveItem(itemData);
         }
         showList();
     } catch (err) {
         console.error('Error saving item:', err);
-        alert('保存に失敗しました。: ' + err.message);
-    } finally {
-        submitBtn.disabled = false;
-        submitBtn.textContent = '手放す';
+        alert('保存に失敗しました。');
     }
 });
 
@@ -532,48 +632,46 @@ function resetForm() {
     previewImg.style.display = 'none';
     placeholder.style.display = 'block';
     submitBtn.textContent = '手放す';
-    submitBtn.disabled = false;
 }
 
 // Rendering
 async function renderList() {
-    itemGrid.innerHTML = '<div style="width:100%; text-align:center; padding:20px;">読み込み中...</div>';
+    itemGrid.innerHTML = '';
+    const allItems = await getAllItems();
 
-    try {
-        const allItems = await getAllItems();
-        const items = allItems.filter(item => item.owner === currentUser);
+    // Filter by current user
+    const items = allItems.filter(item => item.owner === currentUser);
 
-        statsEl.textContent = `${items.length} items`;
-        itemGrid.innerHTML = '';
+    // Update stats
+    statsEl.textContent = `${items.length} items`;
 
-        if (items.length === 0) {
-            emptyState.style.display = 'flex';
-            return;
-        } else {
-            emptyState.style.display = 'none';
-        }
-
-        items.forEach(item => {
-            const card = document.createElement('div');
-            card.className = 'item-card';
-            const dateStr = new Date(item.date).toLocaleDateString('ja-JP', {
-                year: 'numeric', month: 'short', day: 'numeric'
-            });
-
-            card.innerHTML = `
-                <img src="${item.image}" class="item-img-thumb" loading="lazy" alt="Item">
-                ${item.owner ? `<div class="item-owner">${item.owner}</div>` : ''}
-                <div class="item-info">
-                    <span class="item-date">${dateStr}</span>
-                    <div class="item-reason">${item.reason}</div>
-                </div>
-            `;
-            card.addEventListener('click', () => showDetail(item));
-            itemGrid.appendChild(card);
-        });
-    } catch (e) {
-        itemGrid.innerHTML = `<div style="color:red; text-align:center;">エラー: ${e.message}</div>`;
+    if (items.length === 0) {
+        emptyState.style.display = 'flex';
+        return;
+    } else {
+        emptyState.style.display = 'none';
     }
+
+    items.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'item-card';
+
+        const dateStr = new Date(item.date).toLocaleDateString('ja-JP', {
+            year: 'numeric', month: 'short', day: 'numeric'
+        });
+
+        card.innerHTML = `
+            <img src="${item.image}" class="item-img-thumb" loading="lazy" alt="Item">
+            ${item.owner ? `<div class="item-owner">${item.owner}</div>` : ''}
+            <div class="item-info">
+                <span class="item-date">${dateStr}</span>
+                <div class="item-reason">${item.reason}</div>
+            </div>
+        `;
+
+        card.addEventListener('click', () => showDetail(item));
+        itemGrid.appendChild(card);
+    });
 }
 
 // Modal Logic
@@ -599,6 +697,7 @@ function showDetail(item) {
         </div>
     `;
 
+    // Attach event listeners for new buttons
     setTimeout(() => {
         const btnEdit = document.getElementById('btn-edit');
         const btnDelete = document.getElementById('btn-delete');
@@ -612,16 +711,11 @@ function showDetail(item) {
 
         if (btnDelete) {
             btnDelete.onclick = async () => {
-                if (confirm('この記録を削除しますか？')) {
-                    // Local backup delete attempt
-                    if (rootDirectoryHandle) {
-                        try {
-                            // Re-construct filename logic or save filename in DB (Cloud mode we saved storagePath but not local filename)
-                            // Without filename stored, deleting local is hard. Skipping for cloud mode simplicity.
-                        } catch (e) { }
-                    }
+                if (confirm('この記録を削除しますか？\n（写真は元のアルバムからは削除されません）')) {
+                    // Try to delete from local file system if connected
+                    await deleteFromLocalFile(item);
 
-                    await deleteItem(item);
+                    await deleteItem(item.id);
                     modalWrapper.classList.add('hidden');
                     renderList();
                 }
@@ -635,6 +729,7 @@ function showDetail(item) {
 modalClose.addEventListener('click', () => {
     modalWrapper.classList.add('hidden');
 });
+
 modalWrapper.addEventListener('click', (e) => {
     if (e.target === modalWrapper) {
         modalWrapper.classList.add('hidden');
@@ -643,4 +738,5 @@ modalWrapper.addEventListener('click', (e) => {
 
 // Initial Render
 updateHeaderUser();
+// Check if user has no data, maybe prompt something?
 showList();
