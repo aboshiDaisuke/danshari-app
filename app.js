@@ -175,13 +175,21 @@ let rootDirectoryHandle = null;
 
 // File System Logic
 setupFolderBtn.addEventListener('click', async () => {
+    if (!window.showDirectoryPicker) {
+        alert('お使いのブラウザはこの機能に対応していません。\nGoogle Chrome または Edge をご利用ください。');
+        return;
+    }
     try {
         rootDirectoryHandle = await window.showDirectoryPicker();
         folderStatus.style.display = 'block';
         alert('保存先フォルダを設定しました。\n今後撮影する写真は、このフォルダ内のユーザー名フォルダに自動保存されます。');
     } catch (err) {
         console.error(err);
-        alert('フォルダの選択がキャンセルされたか、エラーが発生しました。');
+        if (err.name === 'AbortError') {
+            alert('フォルダ選択がキャンセルされました。');
+        } else {
+            alert('エラーが発生しました:\n' + err.name + ': ' + err.message + '\n\n※Safariなどは非対応です。Chromeをご利用ください。');
+        }
     }
 });
 
@@ -738,5 +746,76 @@ modalWrapper.addEventListener('click', (e) => {
 
 // Initial Render
 updateHeaderUser();
-// Check if user has no data, maybe prompt something?
 showList();
+
+// --- Pull to Refresh Logic ---
+const mainContent = document.querySelector('main');
+let ptrStartY = 0;
+let ptrDistance = 0;
+const PTR_THRESHOLD = 80;
+
+// Create Refresh Indicator
+const ptrIndicator = document.createElement('div');
+ptrIndicator.style.cssText = `
+    position: absolute;
+    top: 60px; /* Below header */
+    left: 0; 
+    width: 100%;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 5;
+    opacity: 0;
+    transition: opacity 0.2s;
+`;
+ptrIndicator.innerHTML = '<span style="font-size:24px; color:var(--primary-color); background:rgba(255,255,255,0.8); border-radius:50%; padding:4px 10px; box-shadow:0 2px 5px rgba(0,0,0,0.1);">↻</span>';
+document.body.appendChild(ptrIndicator);
+
+mainContent.addEventListener('touchstart', (e) => {
+    // Only enable if scrolled to top
+    if (mainContent.scrollTop <= 0) {
+        ptrStartY = e.touches[0].clientY;
+        ptrDistance = 0;
+    } else {
+        ptrStartY = 0; // Disable
+    }
+}, { passive: true });
+
+mainContent.addEventListener('touchmove', (e) => {
+    if (ptrStartY === 0) return;
+
+    // Only handle single touch
+    if (e.touches.length > 1) return;
+
+    const currentY = e.touches[0].clientY;
+    const diff = currentY - ptrStartY;
+
+    if (diff > 0 && mainContent.scrollTop <= 0) {
+        ptrDistance = diff;
+
+        // Show indicator if pulling
+        if (ptrDistance > 20) {
+            ptrIndicator.style.opacity = Math.min((ptrDistance - 20) / 50, 1);
+            const rotation = Math.min(ptrDistance * 3, 360);
+            ptrIndicator.querySelector('span').style.transform = `rotate(${rotation}deg)`;
+        }
+    }
+}, { passive: true });
+
+mainContent.addEventListener('touchend', (e) => {
+    if (ptrStartY === 0) return;
+
+    if (ptrDistance > PTR_THRESHOLD) {
+        // Trigger Refresh
+        ptrIndicator.style.opacity = '1';
+        ptrIndicator.innerHTML = '<span style="font-size:12px; color:var(--text-main); background:rgba(255,255,255,0.9); padding:4px 12px; border-radius:12px;">更新中...</span>';
+        setTimeout(() => location.reload(), 300);
+    } else {
+        // Reset
+        ptrIndicator.style.opacity = '0';
+    }
+    ptrStartY = 0;
+    ptrDistance = 0;
+});

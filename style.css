@@ -2,10 +2,8 @@
     --bg-color: #F8F9FA;
     --surface-color: #FFFFFF;
     --primary-color: #5C7C75;
-    /* Muted Green */
     --primary-dark: #435E58;
     --accent-color: #D68C85;
-    /* Soft Coral */
     --text-main: #2C3333;
     --text-muted: #7E8686;
     --border-radius-lg: 24px;
@@ -14,6 +12,7 @@
     --shadow-hover: 0 8px 30px rgba(0, 0, 0, 0.08);
     --font-ui: 'Noto Sans JP', sans-serif;
     --font-display: 'Zen Maru Gothic', sans-serif;
+    --safe-area-top: env(safe-area-inset-top, 0px);
     --safe-area-bottom: env(safe-area-inset-bottom, 20px);
 }
 
@@ -30,14 +29,17 @@ body {
     color: var(--text-main);
     line-height: 1.6;
     height: 100vh;
+    height: 100dvh;
+    /* Mobile viewport fix */
     overflow: hidden;
-    /* App-like feel */
 }
 
 /* Header */
 .app-header {
     background-color: transparent;
     padding: 20px 24px;
+    padding-top: calc(20px + var(--safe-area-top));
+    /* Safe area fix */
     display: flex;
     justify-content: space-between;
     align-items: center;
