@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>断捨離 Danshari</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style_users.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&display=swap"
+        rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@300;400;500;700&display=swap"
+        rel="stylesheet">
+    <link rel="manifest" href="manifest.json">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+
+<body>
+
+    <div id="app">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-left">
+                <h1>断捨離</h1>
+                <div id="stats" class="header-stats">0 items</div>
+            </div>
+            <div class="header-right">
+                <button id="user-switch-btn" class="user-chip">
+                    <span id="current-user-name">ゲスト</span>
+                    <span class="chevron">▼</span>
+                </button>
+                <button id="settings-btn" class="icon-btn" aria-label="Settings"
+                    style="margin-left: 12px; font-size: 20px; background:none; border:none; cursor:pointer;">⚙️</button>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main id="main-content">
+            <!-- List View (Default) -->
+            <div id="view-list" class="view active">
+                <div id="empty-state" class="empty-state">
+                    <div class="icon">🍃</div>
+                    <p>まだ何もありません。<br>今日から断捨離を始めましょう。</p>
+                </div>
+                <div id="item-grid" class="item-grid">
+                    <!-- Items will be injected here -->
+                </div>
+            </div>
+
+            <!-- Add Item View -->
+            <div id="view-add" class="view">
+                <div class="add-container">
+                    <div class="image-preview-area" id="image-upload-trigger">
+                        <img id="preview-img" src="" alt="Preview" style="display: none;">
+                        <div class="placeholder">
+                            <span class="camera-icon">📷</span>
+                            <p>写真を撮る / 選択</p>
+                        </div>
+                        <input type="file" id="camera-input" accept="image/*" capture="environment">
+                    </div>
+
+                    <form id="add-form">
+                        <div class="form-group">
+                            <label for="reason">手放す理由</label>
+                            <select id="reason" required>
+                                <option value="" disabled selected>理由を選択してください</option>
+                                <option value="使い切った">使い切った</option>
+                                <option value="古くなった">古くなった・壊れた</option>
+                                <option value="ときめかない">ときめかなくなった</option>
+                                <option value="数年間使っていない">数年間使っていない</option>
+                                <option value="趣味が変わった">趣味が変わった</option>
+                                <option value="その他">その他</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="comment">コメント・思い出</label>
+                            <textarea id="comment" placeholder="ありがとう、さようなら..." rows="3"></textarea>
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="button" class="btn-secondary" id="cancel-add">キャンセル</button>
+                            <button type="submit" class="btn-primary">手放す</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </main>
+
+        <!-- FAB (Floating Action Button) -->
+        <button id="fab-add" class="fab" aria-label="Add Item">
+            <span class="plus">+</span>
+        </button>
+    </div>
+
+    <!-- Detail Modal -->
+    <div id="modal-wrapper" class="modal-wrapper hidden">
+        <div class="modal-content">
+            <button id="modal-close" class="modal-close">&times;</button>
+            <div class="modal-body" id="modal-detail-content">
+                <!-- Detail content injected here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- User Selection Modal -->
+    <div id="user-modal" class="modal-wrapper hidden">
+        <div class="modal-content" style="max-height: 80vh;">
+            <div class="modal-header"
+                style="padding: 20px 24px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center;">
+                <h2 style="font-size: 18px; margin: 0;">ユーザー選択</h2>
+                <button id="user-modal-close" class="modal-close-simple"
+                    style="background:none; border:none; font-size:24px; color: #999;">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 20px;">
+                <div id="user-list" class="user-list">
+                    <!-- User list injected here -->
+                </div>
+
+                <div class="add-user-form"
+                    style="display: flex; gap: 8px; margin-top: 20px; padding-top: 20px; border-top: 1px dashed #eee;">
+                    <input type="text" id="new-user-name" placeholder="新しいユーザー名" style="flex: 1;">
+                    <button id="add-user-btn" class="btn-primary"
+                        style="padding: 10px 20px; font-size: 14px;">追加</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal-wrapper hidden">
+        <div class="modal-content">
+            <div class="modal-header"
+                style="padding: 20px 24px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center;">
+                <h2 style="font-size: 18px; margin: 0;">設定</h2>
+                <button id="settings-modal-close" class="modal-close-simple"
+                    style="background:none; border:none; font-size:24px; color: #999;">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 24px;">
+                <div class="setting-item"
+                    style="margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px solid #eee;">
+                    <h3 style="font-size:16px; margin-bottom:8px;">保存先フォルダの設定</h3>
+                    <p style="font-size:13px; color:#666; margin-bottom:16px;">
+                        PC内のフォルダを選択すると、写真を撮影するたびに自動でそのフォルダ（のユーザー名フォルダ）内にも保存されます。<br>
+                        <span style="color:#d97706; font-size:11px;">※Chrome/Edge推奨。ブラウザの制限により毎回リセットされる場合があります。</span>
+                    </p>
+                    <button id="setup-folder-btn" class="btn-secondary"
+                        style="width:100%; padding:12px; border-radius:8px; border:1px solid #ccc; cursor:pointer;">
+                        📂 保存先フォルダを選択
+                    </button>
+                    <div id="folder-status"
+                        style="margin-top:8px; font-size:12px; color:var(--primary-color); font-weight:bold; display:none;">
+                        ✅ 設定済み
+                    </div>
+                </div>
+
+                <div class="setting-item"
+                    style="margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px solid #eee;">
+                    <h3 style="font-size:16px; margin-bottom:8px;">写真の保存（エクスポート）</h3>
+                    <p style="font-size:13px; color:#666; margin-bottom:16px;">
+                        すべての写真を、ユーザーごとのフォルダに整理してZIP形式でダウンロードします。
+                    </p>
+                    <button id="export-data-btn" class="btn-primary"
+                        style="width:100%; padding:12px; border-radius:8px; border:none; cursor:pointer;">
+                        📥 写真をPCに保存する
+                    </button>
+                    <div id="export-progress"
+                        style="display:none; margin-top:8px; font-size:12px; color:#666; text-align:center;">
+                        準備中...
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <h3 style="font-size:16px; margin-bottom:8px;">データのリセット</h3>
+                    <p style="font-size:13px; color:#666; margin-bottom:16px;">
+                        現在のユーザー (<span id="settings-user-name" style="font-weight:bold;"></span>)
+                        の断捨離記録をすべて削除します。一度削除すると元に戻せません。
+                    </p>
+                    <button id="reset-user-data-btn" class="btn-danger"
+                        style="width:100%; padding:12px; border-radius:8px; border:none; cursor:pointer;">
+                        記録を全て削除する
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
