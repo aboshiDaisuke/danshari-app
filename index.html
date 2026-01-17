@@ -27,9 +27,9 @@
                 <div id="stats" class="header-stats">0 items</div>
             </div>
             <div class="header-right">
-                <button id="user-switch-btn" class="user-chip">
-                    <span id="current-user-name">ゲスト</span>
-                    <span class="chevron">▼</span>
+                <!-- Current User Display -->
+                <button id="current-user-name" class="user-chip" style="background:#fff; border:1px solid #ddd; padding:6px 12px; gap:8px; cursor:pointer;">
+                    👤 <span>デフォルトユーザー</span>
                 </button>
                 <button id="settings-btn" class="icon-btn" aria-label="Settings"
                     style="margin-left: 12px; font-size: 20px; background:none; border:none; cursor:pointer;">⚙️</button>
@@ -107,23 +107,21 @@
 
     <!-- User Selection Modal -->
     <div id="user-modal" class="modal-wrapper hidden">
-        <div class="modal-content" style="max-height: 80vh;">
-            <div class="modal-header"
-                style="padding: 20px 24px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center;">
+        <div class="modal-content" style="max-width: 400px;">
+            <div class="modal-header" style="padding: 20px 24px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center;">
                 <h2 style="font-size: 18px; margin: 0;">ユーザー選択</h2>
-                <button id="user-modal-close" class="modal-close-simple"
-                    style="background:none; border:none; font-size:24px; color: #999;">&times;</button>
+                <button id="user-modal-close" class="modal-close-simple" style="background:none; border:none; font-size:24px; color: #999;">&times;</button>
             </div>
-            <div class="modal-body" style="padding: 20px;">
-                <div id="user-list" class="user-list">
-                    <!-- User list injected here -->
+            <div class="modal-body" style="padding: 24px;">
+                <div id="user-list" style="margin-bottom: 24px;">
+                    <!-- User list will be injected here -->
                 </div>
-
-                <div class="add-user-form"
-                    style="display: flex; gap: 8px; margin-top: 20px; padding-top: 20px; border-top: 1px dashed #eee;">
-                    <input type="text" id="new-user-name" placeholder="新しいユーザー名" style="flex: 1;">
-                    <button id="add-user-btn" class="btn-primary"
-                        style="padding: 10px 20px; font-size: 14px;">追加</button>
+                <div style="border-top: 1px solid #eee; padding-top: 16px;">
+                    <h3 style="font-size: 14px; margin-bottom: 12px;">新しいユーザーを追加</h3>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="new-user-input" placeholder="ユーザー名" style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                        <button id="add-user-btn" class="btn-primary" style="padding: 10px 20px;">追加</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -141,7 +139,7 @@
             <div class="modal-body" style="padding: 24px;">
                 <div class="setting-item"
                     style="margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px solid #eee;">
-                    <h3 style="font-size:16px; margin-bottom:8px;">保存先フォルダの設定</h3>
+                    <h3 style="font-size:16px; margin-bottom:8px;">📁 PC保存先フォルダの設定</h3>
                     <p style="font-size:13px; color:#666; margin-bottom:16px;">
                         PC内のフォルダを選択すると、写真を撮影するたびに自動でそのフォルダ（のユーザー名フォルダ）内にも保存されます。<br>
                         <span style="color:#d97706; font-size:11px;">※Chrome/Edge推奨。ブラウザの制限により毎回リセットされる場合があります。</span>
@@ -158,13 +156,14 @@
 
                 <div class="setting-item"
                     style="margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px solid #eee;">
-                    <h3 style="font-size:16px; margin-bottom:8px;">写真の保存（エクスポート）</h3>
+                    <h3 style="font-size:16px; margin-bottom:8px;">📤 写真のバックアップ</h3>
                     <p style="font-size:13px; color:#666; margin-bottom:16px;">
-                        すべての写真を、ユーザーごとのフォルダに整理してZIP形式でダウンロードします。
+                        すべての写真を、ユーザーごとのフォルダに整理してZIP形式でダウンロードします。<br>
+                        <span style="color:#16a34a; font-size:12px;">💡 ダウンロード後、GoogleドライブやiCloudに手動でアップロードできます。</span>
                     </p>
                     <button id="export-data-btn" class="btn-primary"
                         style="width:100%; padding:12px; border-radius:8px; border:none; cursor:pointer;">
-                        📥 写真をPCに保存する
+                        📥 写真をダウンロード
                     </button>
                     <div id="export-progress"
                         style="display:none; margin-top:8px; font-size:12px; color:#666; text-align:center;">
